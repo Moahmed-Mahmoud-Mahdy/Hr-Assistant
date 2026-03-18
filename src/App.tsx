@@ -4,10 +4,12 @@ import {
   UploadCloud, FileText, CheckCircle, XCircle, Loader2, Save, 
   Trash2, Plus, Briefcase, User, Star, FileSearch, Sun, Moon, 
   Layers, Clock, Wrench, ListPlus, ChevronDown, Sparkles,
-  ThumbsUp, ThumbsDown, MessageCircle, AlertTriangle, Filter, Heart
+  ThumbsUp, ThumbsDown, MessageCircle, AlertTriangle, Filter, Heart,
+  PieChart as PieChartIcon, TrendingUp, Users, Send, AreaChart as AreaChartIcon, MessageSquare
 } from 'lucide-react';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } from 'recharts';
 import { JobProfile, EvaluationResult } from './types';
-import { evaluateCV } from './services/geminiService';
+import { evaluateCV, askAIAssistant } from './services/geminiService';
 
 const translations = {
   ar: {
@@ -57,7 +59,20 @@ const translations = {
     whatsappAccept: "مرحباً {name}،\n\nيسعدنا إبلاغك بأنه تم قبول سيرتك الذاتية مبدئياً لوظيفة \"{title}\". سنتواصل معك قريباً لتحديد موعد المقابلة.\n\nبالتوفيق!",
     whatsappReject: "مرحباً {name}،\n\nنشكرك على اهتمامك بوظيفة \"{title}\". نعتذر لعدم تمكننا من المضي قدماً في طلبك هذه المرة، ونتمنى لك التوفيق في مسيرتك المهنية.",
     unknownError: "حدث خطأ غير معروف",
-    clearResults: "مسح النتائج"
+    clearResults: "مسح النتائج",
+    dataAnalysis: "تحليل البيانات",
+    totalCandidates: "إجمالي المرشحين",
+    acceptanceRate: "نسبة القبول",
+    avgScore: "متوسط التقييم",
+    statusDistribution: "توزيع حالات القبول",
+    scoreDistribution: "توزيع التقييمات",
+    pending: "قيد الانتظار / لم يحدد",
+    homeTab: "الرئيسية",
+    analyticsTab: "التحليلات والذكاء الاصطناعي",
+    aiAssistant: "المساعد الذكي",
+    askAssistantPlaceholder: "اسأل المساعد الذكي عن المرشحين...",
+    send: "إرسال",
+    noDataForAnalysis: "لا توجد بيانات كافية للتحليل بعد."
   },
   en: {
     title: "CV Screening System",
@@ -106,7 +121,20 @@ const translations = {
     whatsappAccept: "Hello {name},\n\nWe are pleased to inform you that your CV has been initially accepted for the \"{title}\" position. We will contact you soon to schedule an interview.\n\nBest of luck!",
     whatsappReject: "Hello {name},\n\nThank you for your interest in the \"{title}\" position. We regret to inform you that we cannot proceed with your application at this time. We wish you the best in your career.",
     unknownError: "Unknown error occurred",
-    clearResults: "Clear Results"
+    clearResults: "Clear Results",
+    dataAnalysis: "Data Analysis",
+    totalCandidates: "Total Candidates",
+    acceptanceRate: "Acceptance Rate",
+    avgScore: "Average Score",
+    statusDistribution: "Status Distribution",
+    scoreDistribution: "Score Distribution",
+    pending: "Pending / Undecided",
+    homeTab: "Home",
+    analyticsTab: "Analytics & AI",
+    aiAssistant: "AI Assistant",
+    askAssistantPlaceholder: "Ask the AI assistant about candidates...",
+    send: "Send",
+    noDataForAnalysis: "Not enough data for analysis yet."
   }
 };
 
@@ -153,6 +181,17 @@ export default function App() {
     }
     return [];
   });
+
+  const [activeTab, setActiveTab] = useState<'home' | 'analytics'>('home');
+  const [chatHistory, setChatHistory] = useState<{role: 'user' | 'ai', text: string}[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory]);
+
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'accepted' | 'rejected'>('all');
@@ -341,6 +380,26 @@ export default function App() {
     window.open(url, '_blank');
   };
 
+  const handleChatSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || isChatLoading) return;
+
+    const userMessage = chatInput.trim();
+    setChatInput('');
+    setChatHistory(prev => [...prev, { role: 'user', text: userMessage }]);
+    setIsChatLoading(true);
+
+    try {
+      const response = await askAIAssistant(userMessage, evaluations, lang);
+      setChatHistory(prev => [...prev, { role: 'ai', text: response }]);
+    } catch (error) {
+      console.error('Chat error:', error);
+      setChatHistory(prev => [...prev, { role: 'ai', text: t.unknownError }]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
   const containerVariants = {
     hidden: { opacity: 0 },
     show: {
@@ -365,6 +424,27 @@ export default function App() {
     return e.decision === filter;
   });
 
+  const totalEval = evaluations.length;
+  const acceptedCount = evaluations.filter(e => e.decision === 'accepted').length;
+  const rejectedCount = evaluations.filter(e => e.decision === 'rejected').length;
+  const pendingCount = evaluations.filter(e => e.decision === 'none').length;
+  const acceptanceRate = totalEval > 0 ? Math.round((acceptedCount / totalEval) * 100) : 0;
+  const validScores = evaluations.filter(e => e.status === 'success' && typeof e.score === 'number');
+  const avgScore = validScores.length > 0 ? Math.round(validScores.reduce((acc, curr) => acc + (curr.score || 0), 0) / validScores.length) : 0;
+
+  const statusData = [
+    { name: t.accepted, value: acceptedCount, color: '#10b981' },
+    { name: t.rejected, value: rejectedCount, color: '#ef4444' },
+    { name: t.pending, value: pendingCount, color: '#f59e0b' }
+  ].filter(d => d.value > 0);
+
+  const scoreRanges = [
+    { name: '0-50', count: validScores.filter(e => e.score! <= 50).length },
+    { name: '51-70', count: validScores.filter(e => e.score! > 50 && e.score! <= 70).length },
+    { name: '71-90', count: validScores.filter(e => e.score! > 70 && e.score! <= 90).length },
+    { name: '91-100', count: validScores.filter(e => e.score! > 90).length },
+  ];
+
   return (
     <div className="min-h-screen p-4 md:p-8 transition-colors duration-300" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       <header className="max-w-7xl mx-auto mb-8 flex items-center justify-between">
@@ -373,12 +453,12 @@ export default function App() {
           animate={{ opacity: 1, y: 0 }}
           className="flex items-center gap-4"
         >
-          <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-3.5 rounded-2xl text-white shadow-lg shadow-blue-600/30">
+          <div className="bg-gradient-to-br from-amber-600 to-amber-700 p-3.5 rounded-2xl text-white shadow-lg shadow-amber-600/30">
             <FileSearch size={28} />
           </div>
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white">{t.title}</h1>
-            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 flex items-center gap-1">
+            <h1 className="text-2xl md:text-3xl font-bold text-stone-900 dark:text-white">{t.title}</h1>
+            <p className="text-stone-500 dark:text-stone-400 text-sm mt-1 flex items-center gap-1">
               <Sparkles size={14} className="text-amber-500" />
               {t.subtitle}
             </p>
@@ -390,7 +470,7 @@ export default function App() {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')}
-            className="p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full text-slate-600 dark:text-slate-300 shadow-sm hover:shadow-md transition-all cursor-pointer font-bold text-sm flex items-center justify-center w-11 h-11"
+            className="p-3 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-full text-stone-600 dark:text-stone-300 shadow-sm hover:shadow-md transition-all cursor-pointer font-bold text-sm flex items-center justify-center w-11 h-11"
           >
             {lang === 'ar' ? 'EN' : 'عربي'}
           </motion.button>
@@ -398,14 +478,34 @@ export default function App() {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setIsDarkMode(!isDarkMode)}
-            className="p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full text-slate-600 dark:text-slate-300 shadow-sm hover:shadow-md transition-all cursor-pointer w-11 h-11 flex items-center justify-center"
+            className="p-3 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-full text-stone-600 dark:text-stone-300 shadow-sm hover:shadow-md transition-all cursor-pointer w-11 h-11 flex items-center justify-center"
           >
             {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
           </motion.button>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="max-w-7xl mx-auto mb-8 flex justify-center">
+        <div className="bg-white dark:bg-stone-800 p-1.5 rounded-full border border-stone-200 dark:border-stone-700 shadow-sm flex items-center gap-1">
+          <button
+            onClick={() => setActiveTab('home')}
+            className={`px-6 py-2.5 rounded-full text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 shadow-sm' : 'text-stone-600 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-700/50'}`}
+          >
+            <Layers size={18} />
+            {t.homeTab}
+          </button>
+          <button
+            onClick={() => setActiveTab('analytics')}
+            className={`px-6 py-2.5 rounded-full text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'analytics' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 shadow-sm' : 'text-stone-600 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-700/50'}`}
+          >
+            <AreaChartIcon size={18} />
+            {t.analyticsTab}
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'home' ? (
+        <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* Right Column: Job Profile */}
         <motion.div 
@@ -413,30 +513,30 @@ export default function App() {
           animate={{ opacity: 1, y: 0 }}
           className="lg:col-span-4 space-y-6 lg:sticky lg:top-8 h-fit"
         >
-          <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-slate-700/50 transition-colors">
+          <div className="bg-white dark:bg-stone-800 rounded-3xl p-6 shadow-sm border border-stone-200 dark:border-stone-700/50 transition-colors">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800 dark:text-white">
-                <Briefcase size={22} className="text-blue-600 dark:text-blue-400" />
+              <h2 className="text-xl font-bold flex items-center gap-2 text-stone-800 dark:text-white">
+                <Briefcase size={22} className="text-amber-600 dark:text-amber-400" />
                 {t.jobProfile}
               </h2>
             </div>
 
             <div className="mb-6 relative" ref={dropdownRef}>
-              <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">{t.savedProfiles}</label>
+              <label className="block text-sm font-semibold text-stone-700 dark:text-stone-300 mb-2">{t.savedProfiles}</label>
               
               <button
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="w-full flex items-center justify-between bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all dark:text-white cursor-pointer"
+                className="w-full flex items-center justify-between bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all dark:text-white cursor-pointer"
               >
                 <span className="flex items-center gap-2 font-medium">
                   {selectedProfileId === 'new' || !selectedProfileId ? (
-                    <><Plus size={18} className="text-blue-500" /> {t.createNew}</>
+                    <><Plus size={18} className="text-amber-500" /> {t.createNew}</>
                   ) : (
-                    <><FileText size={18} className="text-indigo-500" /> {currentProfile.title || t.untitled}</>
+                    <><FileText size={18} className="text-amber-500" /> {currentProfile.title || t.untitled}</>
                   )}
                 </span>
                 <motion.div animate={{ rotate: isDropdownOpen ? 180 : 0 }} transition={{ duration: 0.2 }}>
-                  <ChevronDown size={18} className="text-slate-400" />
+                  <ChevronDown size={18} className="text-stone-400" />
                 </motion.div>
               </button>
 
@@ -447,26 +547,26 @@ export default function App() {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -10, scale: 0.95 }}
                     transition={{ duration: 0.15 }}
-                    className="absolute z-50 w-full mt-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden"
+                    className="absolute z-50 w-full mt-2 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-xl shadow-xl overflow-hidden"
                   >
                     <div className="max-h-60 overflow-y-auto py-2 custom-scrollbar">
                       <button
                         onClick={() => selectProfile('new')}
-                        className={`w-full text-start px-4 py-3 text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors ${selectedProfileId === 'new' || !selectedProfileId ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-700 dark:text-slate-300'}`}
+                        className={`w-full text-start px-4 py-3 text-sm flex items-center gap-2 hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors ${selectedProfileId === 'new' || !selectedProfileId ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 font-bold' : 'text-stone-700 dark:text-stone-300'}`}
                       >
-                        <Plus size={16} className={selectedProfileId === 'new' || !selectedProfileId ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'} />
+                        <Plus size={16} className={selectedProfileId === 'new' || !selectedProfileId ? 'text-amber-600 dark:text-amber-400' : 'text-stone-400'} />
                         {t.createNew}
                       </button>
                       
-                      {profiles.length > 0 && <div className="h-px bg-slate-100 dark:bg-slate-700 my-1 mx-4"></div>}
+                      {profiles.length > 0 && <div className="h-px bg-stone-100 dark:bg-stone-700 my-1 mx-4"></div>}
                       
                       {profiles.map(p => (
                         <button
                           key={p.id}
                           onClick={() => selectProfile(p.id)}
-                          className={`w-full text-start px-4 py-3 text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors ${selectedProfileId === p.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-700 dark:text-slate-300'}`}
+                          className={`w-full text-start px-4 py-3 text-sm flex items-center gap-2 hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors ${selectedProfileId === p.id ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 font-bold' : 'text-stone-700 dark:text-stone-300'}`}
                         >
-                          <FileText size={16} className={selectedProfileId === p.id ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'} />
+                          <FileText size={16} className={selectedProfileId === p.id ? 'text-amber-600 dark:text-amber-400' : 'text-stone-400'} />
                           {p.title || t.untitled}
                         </button>
                       ))}
@@ -484,39 +584,39 @@ export default function App() {
               className="space-y-5"
             >
               <motion.div variants={itemVariants}>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t.jobTitle}</label>
+                <label className="block text-sm font-semibold text-stone-700 dark:text-stone-300 mb-1.5">{t.jobTitle}</label>
                 <div className="relative">
                   <div className="absolute inset-y-0 end-0 pe-3.5 flex items-center pointer-events-none">
-                    <Briefcase size={18} className="text-blue-500/70" />
+                    <Briefcase size={18} className="text-amber-500/70" />
                   </div>
                   <input 
                     type="text" 
                     value={currentProfile.title}
                     onChange={e => setCurrentProfile({...currentProfile, title: e.target.value})}
                     placeholder={t.jobTitlePlaceholder}
-                    className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all dark:text-white placeholder:text-slate-400"
+                    className="w-full bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all dark:text-white placeholder:text-stone-400"
                   />
                 </div>
               </motion.div>
 
               <motion.div variants={itemVariants}>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t.field}</label>
+                <label className="block text-sm font-semibold text-stone-700 dark:text-stone-300 mb-1.5">{t.field}</label>
                 <div className="relative">
                   <div className="absolute inset-y-0 end-0 pe-3.5 flex items-center pointer-events-none">
-                    <Layers size={18} className="text-indigo-500/70" />
+                    <Layers size={18} className="text-amber-500/70" />
                   </div>
                   <input 
                     type="text" 
                     value={currentProfile.field}
                     onChange={e => setCurrentProfile({...currentProfile, field: e.target.value})}
                     placeholder={t.fieldPlaceholder}
-                    className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all dark:text-white placeholder:text-slate-400"
+                    className="w-full bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all dark:text-white placeholder:text-stone-400"
                   />
                 </div>
               </motion.div>
 
               <motion.div variants={itemVariants}>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t.experience}</label>
+                <label className="block text-sm font-semibold text-stone-700 dark:text-stone-300 mb-1.5">{t.experience}</label>
                 <div className="relative">
                   <div className="absolute top-3 end-0 pe-3.5 flex items-start pointer-events-none">
                     <Clock size={18} className="text-emerald-500/70" />
@@ -526,13 +626,13 @@ export default function App() {
                     onChange={e => setCurrentProfile({...currentProfile, experience: e.target.value})}
                     placeholder={t.experiencePlaceholder}
                     rows={2}
-                    className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none dark:text-white placeholder:text-slate-400"
+                    className="w-full bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all resize-none dark:text-white placeholder:text-stone-400"
                   />
                 </div>
               </motion.div>
 
               <motion.div variants={itemVariants}>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t.skills}</label>
+                <label className="block text-sm font-semibold text-stone-700 dark:text-stone-300 mb-1.5">{t.skills}</label>
                 <div className="relative">
                   <div className="absolute top-3 end-0 pe-3.5 flex items-start pointer-events-none">
                     <Wrench size={18} className="text-amber-500/70" />
@@ -542,13 +642,13 @@ export default function App() {
                     onChange={e => setCurrentProfile({...currentProfile, skills: e.target.value})}
                     placeholder={t.skillsPlaceholder}
                     rows={2}
-                    className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none dark:text-white placeholder:text-slate-400"
+                    className="w-full bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all resize-none dark:text-white placeholder:text-stone-400"
                   />
                 </div>
               </motion.div>
 
               <motion.div variants={itemVariants}>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t.other}</label>
+                <label className="block text-sm font-semibold text-stone-700 dark:text-stone-300 mb-1.5">{t.other}</label>
                 <div className="relative">
                   <div className="absolute top-3 end-0 pe-3.5 flex items-start pointer-events-none">
                     <ListPlus size={18} className="text-rose-500/70" />
@@ -558,7 +658,7 @@ export default function App() {
                     onChange={e => setCurrentProfile({...currentProfile, other: e.target.value})}
                     placeholder={t.otherPlaceholder}
                     rows={2}
-                    className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none dark:text-white placeholder:text-slate-400"
+                    className="w-full bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-700 rounded-xl pe-11 ps-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all resize-none dark:text-white placeholder:text-stone-400"
                   />
                 </div>
               </motion.div>
@@ -569,7 +669,7 @@ export default function App() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={saveProfile}
-                className="flex-1 bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-slate-100 text-white dark:text-slate-900 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-md"
+                className="flex-1 bg-stone-900 dark:bg-white hover:bg-stone-800 dark:hover:bg-stone-100 text-white dark:text-stone-900 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-md"
               >
                 <Save size={18} />
                 {t.saveProfile}
@@ -596,21 +696,21 @@ export default function App() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="bg-white dark:bg-slate-800 rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-slate-700/50"
+            className="bg-white dark:bg-stone-800 rounded-3xl p-6 shadow-sm border border-stone-200 dark:border-stone-700/50"
           >
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800 dark:text-white">
-                <UploadCloud size={22} className="text-blue-600 dark:text-blue-400" />
+              <h2 className="text-xl font-bold flex items-center gap-2 text-stone-800 dark:text-white">
+                <UploadCloud size={22} className="text-amber-600 dark:text-amber-400" />
                 {t.uploadCVs}
               </h2>
-              <span className="text-xs font-bold bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-full border border-blue-100 dark:border-blue-500/20">
+              <span className="text-xs font-bold bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 px-3 py-1.5 rounded-full border border-amber-100 dark:border-amber-500/20">
                 {t.supportsPDF}
               </span>
             </div>
 
             <div 
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-500 dark:hover:border-blue-400 bg-slate-50 dark:bg-slate-800/50 hover:bg-blue-50/50 dark:hover:bg-blue-500/5 rounded-2xl p-10 text-center cursor-pointer transition-all group relative overflow-hidden"
+              className="border-2 border-dashed border-stone-300 dark:border-stone-600 hover:border-amber-500 dark:hover:border-amber-400 bg-stone-50 dark:bg-stone-800/50 hover:bg-amber-50/50 dark:hover:bg-amber-500/5 rounded-2xl p-10 text-center cursor-pointer transition-all group relative overflow-hidden"
             >
               <input 
                 type="file" 
@@ -622,12 +722,12 @@ export default function App() {
               />
               <motion.div 
                 whileHover={{ scale: 1.1, rotate: 5 }}
-                className="bg-white dark:bg-slate-700 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-5 shadow-md group-hover:shadow-lg transition-all"
+                className="bg-white dark:bg-stone-700 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-5 shadow-md group-hover:shadow-lg transition-all"
               >
-                <UploadCloud size={32} className="text-blue-500 dark:text-blue-400" />
+                <UploadCloud size={32} className="text-amber-500 dark:text-amber-400" />
               </motion.div>
-              <p className="text-slate-800 dark:text-slate-200 font-bold text-lg mb-2">{t.dragDrop}</p>
-              <p className="text-slate-500 dark:text-slate-400 text-sm">{t.multipleFiles}</p>
+              <p className="text-stone-800 dark:text-stone-200 font-bold text-lg mb-2">{t.dragDrop}</p>
+              <p className="text-stone-500 dark:text-stone-400 text-sm">{t.multipleFiles}</p>
             </div>
 
             <AnimatePresence>
@@ -638,7 +738,7 @@ export default function App() {
                   exit={{ opacity: 0, height: 0 }}
                   className="mt-8"
                 >
-                  <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-4 flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-stone-700 dark:text-stone-300 mb-4 flex items-center gap-2">
                     <FileText size={16} />
                     {t.selectedFiles} ({files.length})
                   </h3>
@@ -650,17 +750,17 @@ export default function App() {
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.95 }}
                           key={`${file.name}-${idx}`} 
-                          className="flex items-center justify-between bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 p-3.5 rounded-xl group hover:border-blue-300 dark:hover:border-blue-500/50 transition-colors"
+                          className="flex items-center justify-between bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-700 p-3.5 rounded-xl group hover:border-amber-300 dark:hover:border-amber-500/50 transition-colors"
                         >
                           <div className="flex items-center gap-3 overflow-hidden">
-                            <div className="bg-white dark:bg-slate-800 p-2 rounded-lg shadow-sm">
-                              <FileText size={18} className="text-blue-500 dark:text-blue-400 shrink-0" />
+                            <div className="bg-white dark:bg-stone-800 p-2 rounded-lg shadow-sm">
+                              <FileText size={18} className="text-amber-500 dark:text-amber-400 shrink-0" />
                             </div>
-                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">{file.name}</span>
+                            <span className="text-sm font-medium text-stone-700 dark:text-stone-300 truncate">{file.name}</span>
                           </div>
                           <button 
                             onClick={(e) => { e.stopPropagation(); removeFile(idx); }}
-                            className="text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors shrink-0 cursor-pointer p-1"
+                            className="text-stone-400 hover:text-red-500 dark:hover:text-red-400 transition-colors shrink-0 cursor-pointer p-1"
                           >
                             <XCircle size={20} />
                           </button>
@@ -675,7 +775,7 @@ export default function App() {
                       whileTap={{ scale: 0.98 }}
                       onClick={startEvaluation}
                       disabled={isEvaluating}
-                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-blue-400 disabled:to-indigo-400 text-white px-8 py-3.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-600/20 cursor-pointer"
+                      className="bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 disabled:from-amber-400 disabled:to-amber-500 text-white px-8 py-3.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-amber-600/20 cursor-pointer"
                     >
                       {isEvaluating ? (
                         <>
@@ -706,27 +806,27 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
                   <div className="flex items-center gap-2">
                     <Sparkles className="text-amber-500" size={24} />
-                    <h2 className="text-2xl font-bold text-slate-800 dark:text-white">{t.results}</h2>
+                    <h2 className="text-2xl font-bold text-stone-800 dark:text-white">{t.results}</h2>
                   </div>
                   
                   <div className="flex items-center gap-3">
                     {/* Filters */}
-                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 overflow-x-auto">
+                    <div className="flex items-center gap-1 bg-stone-100 dark:bg-stone-800/80 p-1.5 rounded-xl border border-stone-200 dark:border-stone-700 overflow-x-auto">
                       <button 
                         onClick={() => setFilter('all')}
-                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filter === 'all' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filter === 'all' ? 'bg-white dark:bg-stone-700 text-amber-600 dark:text-amber-400 shadow-sm' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
                       >
                         {t.all}
                       </button>
                       <button 
                         onClick={() => setFilter('accepted')}
-                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${filter === 'accepted' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${filter === 'accepted' ? 'bg-white dark:bg-stone-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
                       >
                         <ThumbsUp size={14} /> {t.accepted}
                       </button>
                       <button 
                         onClick={() => setFilter('rejected')}
-                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${filter === 'rejected' ? 'bg-white dark:bg-slate-700 text-red-600 dark:text-red-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${filter === 'rejected' ? 'bg-white dark:bg-stone-700 text-red-600 dark:text-red-400 shadow-sm' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
                       >
                         <ThumbsDown size={14} /> {t.rejected}
                       </button>
@@ -748,10 +848,10 @@ export default function App() {
                       <motion.div 
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="bg-white dark:bg-slate-800 rounded-3xl p-10 text-center border border-slate-200 dark:border-slate-700/50"
+                        className="bg-white dark:bg-stone-800 rounded-3xl p-10 text-center border border-stone-200 dark:border-stone-700/50"
                       >
-                        <Filter size={48} className="mx-auto text-slate-300 dark:text-slate-600 mb-4" />
-                        <p className="text-slate-500 dark:text-slate-400 font-medium">{t.noResults}</p>
+                        <Filter size={48} className="mx-auto text-stone-300 dark:text-stone-600 mb-4" />
+                        <p className="text-stone-500 dark:text-stone-400 font-medium">{t.noResults}</p>
                       </motion.div>
                     ) : (
                       filteredEvaluations.map((evalResult, index) => (
@@ -762,10 +862,10 @@ export default function App() {
                           exit={{ opacity: 0, scale: 0.95 }}
                           transition={{ delay: index * 0.05 }}
                           key={evalResult.id} 
-                          className={`bg-white dark:bg-slate-800 rounded-3xl p-6 md:p-8 shadow-sm border transition-all relative overflow-hidden ${
+                          className={`bg-white dark:bg-stone-800 rounded-3xl p-6 md:p-8 shadow-sm border transition-all relative overflow-hidden ${
                             evalResult.decision === 'accepted' ? 'border-emerald-200 dark:border-emerald-500/30 shadow-emerald-500/5' :
                             evalResult.decision === 'rejected' ? 'border-red-200 dark:border-red-500/30 shadow-red-500/5' :
-                            'border-slate-200 dark:border-slate-700/50 hover:shadow-md'
+                            'border-stone-200 dark:border-stone-700/50 hover:shadow-md'
                           }`}
                         >
                           {/* Status Indicator Line */}
@@ -776,12 +876,12 @@ export default function App() {
                           )}
 
                           {evalResult.status === 'pending' ? (
-                            <div className="flex items-center gap-5 text-slate-500 dark:text-slate-400">
-                              <div className="bg-blue-50 dark:bg-blue-500/10 p-4 rounded-full">
-                                <Loader2 size={28} className="animate-spin text-blue-600 dark:text-blue-400" />
+                            <div className="flex items-center gap-5 text-stone-500 dark:text-stone-400">
+                              <div className="bg-amber-50 dark:bg-amber-500/10 p-4 rounded-full">
+                                <Loader2 size={28} className="animate-spin text-amber-600 dark:text-amber-400" />
                               </div>
                               <div>
-                                <p className="font-bold text-lg text-slate-800 dark:text-white mb-1">{t.analyzing} {evalResult.fileName}...</p>
+                                <p className="font-bold text-lg text-stone-800 dark:text-white mb-1">{t.analyzing} {evalResult.fileName}...</p>
                                 <p className="text-sm">{t.analyzingDesc}</p>
                               </div>
                             </div>
@@ -802,7 +902,7 @@ export default function App() {
                                 <div className="relative w-28 h-28 flex items-center justify-center">
                                   <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
                                     <path
-                                      className="text-slate-100 dark:text-slate-700"
+                                      className="text-stone-100 dark:text-stone-700"
                                       strokeWidth="3"
                                       stroke="currentColor"
                                       fill="none"
@@ -824,10 +924,10 @@ export default function App() {
                                     />
                                   </svg>
                                   <div className="absolute flex flex-col items-center justify-center">
-                                    <span className="text-3xl font-black text-slate-800 dark:text-white">{evalResult.score}%</span>
+                                    <span className="text-3xl font-black text-stone-800 dark:text-white">{evalResult.score}%</span>
                                   </div>
                                 </div>
-                                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 mt-3 bg-slate-100 dark:bg-slate-700 px-3 py-1.5 rounded-lg">
+                                <span className="text-xs font-bold text-stone-600 dark:text-stone-300 mt-3 bg-stone-100 dark:bg-stone-700 px-3 py-1.5 rounded-lg">
                                   {t.matchScore}
                                 </span>
                               </div>
@@ -836,11 +936,11 @@ export default function App() {
                               <div className="flex-1">
                                 <div className="flex items-start justify-between mb-5">
                                   <div>
-                                    <h3 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                                      <User size={24} className="text-blue-500" />
+                                    <h3 className="text-2xl font-bold text-stone-800 dark:text-white flex items-center gap-2">
+                                      <User size={24} className="text-amber-500" />
                                       {evalResult.candidateName}
                                     </h3>
-                                    <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-1.5 flex items-center gap-1.5">
+                                    <p className="text-sm font-medium text-stone-500 dark:text-stone-400 mt-1.5 flex items-center gap-1.5">
                                       <FileText size={16} />
                                       {evalResult.fileName}
                                     </p>
@@ -848,11 +948,11 @@ export default function App() {
                                 </div>
 
                                 <div className="mb-6">
-                                  <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-2">
-                                    <Layers size={16} className="text-indigo-500" />
+                                  <h4 className="text-sm font-bold text-stone-800 dark:text-stone-200 mb-3 flex items-center gap-2">
+                                    <Layers size={16} className="text-amber-500" />
                                     {t.summary}
                                   </h4>
-                                  <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed bg-slate-50 dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-700/50">
+                                  <p className="text-stone-600 dark:text-stone-300 text-sm leading-relaxed bg-stone-50 dark:bg-stone-900/50 p-4 rounded-2xl border border-stone-100 dark:border-stone-700/50">
                                     {evalResult.summary}
                                   </p>
                                 </div>
@@ -860,7 +960,7 @@ export default function App() {
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                   {/* Strengths */}
                                   <div>
-                                    <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-2">
+                                    <h4 className="text-sm font-bold text-stone-800 dark:text-stone-200 mb-3 flex items-center gap-2">
                                       <Star size={16} className="text-emerald-500" />
                                       {t.strengths}
                                     </h4>
@@ -871,7 +971,7 @@ export default function App() {
                                           animate={{ opacity: 1, y: 0 }}
                                           transition={{ delay: 0.5 + (idx * 0.1) }}
                                           key={idx} 
-                                          className="flex items-start gap-2.5 text-sm text-slate-600 dark:text-slate-300 bg-emerald-50/50 dark:bg-emerald-500/5 p-2.5 rounded-xl border border-emerald-100/50 dark:border-emerald-500/10"
+                                          className="flex items-start gap-2.5 text-sm text-stone-600 dark:text-stone-300 bg-emerald-50/50 dark:bg-emerald-500/5 p-2.5 rounded-xl border border-emerald-100/50 dark:border-emerald-500/10"
                                         >
                                           <CheckCircle size={18} className="text-emerald-500 shrink-0 mt-0.5" />
                                           <span className="leading-relaxed">{strength}</span>
@@ -882,7 +982,7 @@ export default function App() {
 
                                   {/* Weaknesses */}
                                   <div>
-                                    <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-2">
+                                    <h4 className="text-sm font-bold text-stone-800 dark:text-stone-200 mb-3 flex items-center gap-2">
                                       <AlertTriangle size={16} className="text-red-500" />
                                       {t.weaknesses}
                                     </h4>
@@ -893,21 +993,21 @@ export default function App() {
                                           animate={{ opacity: 1, y: 0 }}
                                           transition={{ delay: 0.6 + (idx * 0.1) }}
                                           key={idx} 
-                                          className="flex items-start gap-2.5 text-sm text-slate-600 dark:text-slate-300 bg-red-50/50 dark:bg-red-500/5 p-2.5 rounded-xl border border-red-100/50 dark:border-red-500/10"
+                                          className="flex items-start gap-2.5 text-sm text-stone-600 dark:text-stone-300 bg-red-50/50 dark:bg-red-500/5 p-2.5 rounded-xl border border-red-100/50 dark:border-red-500/10"
                                         >
                                           <XCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
                                           <span className="leading-relaxed">{weakness}</span>
                                         </motion.li>
                                       ))}
                                       {(!evalResult.keyWeaknesses || evalResult.keyWeaknesses.length === 0) && (
-                                        <li className="text-sm text-slate-400 dark:text-slate-500 italic p-2">{t.noWeaknesses}</li>
+                                        <li className="text-sm text-stone-400 dark:text-stone-500 italic p-2">{t.noWeaknesses}</li>
                                       )}
                                     </ul>
                                   </div>
                                 </div>
 
                                 {/* Actions */}
-                                <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700/50 flex flex-wrap items-center gap-3">
+                                <div className="mt-8 pt-6 border-t border-stone-100 dark:border-stone-700/50 flex flex-wrap items-center gap-3">
                                   <button
                                     onClick={() => handleDecision(evalResult.id, 'accepted')}
                                     className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer ${
@@ -956,8 +1056,168 @@ export default function App() {
           </AnimatePresence>
         </div>
       </main>
+      ) : (
+        <main className="max-w-7xl mx-auto space-y-8">
+          {totalEval === 0 ? (
+            <div className="bg-white dark:bg-stone-800 rounded-3xl p-12 text-center shadow-sm border border-stone-200 dark:border-stone-700/50">
+              <div className="bg-stone-100 dark:bg-stone-700/50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AreaChartIcon size={32} className="text-stone-400 dark:text-stone-500" />
+              </div>
+              <h3 className="text-xl font-bold text-stone-800 dark:text-white mb-2">{t.noDataForAnalysis}</h3>
+              <p className="text-stone-500 dark:text-stone-400 max-w-md mx-auto">
+                {lang === 'ar' ? 'قم بتقييم بعض السير الذاتية أولاً لتتمكن من رؤية التحليلات والتفاعل مع المساعد الذكي.' : 'Evaluate some CVs first to see analytics and interact with the AI assistant.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Data Analysis Section */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-white dark:bg-stone-800 p-6 rounded-3xl border border-stone-200 dark:border-stone-700 shadow-sm flex items-center gap-5">
+                  <div className="bg-stone-100 dark:bg-stone-700 p-4 rounded-2xl text-stone-600 dark:text-stone-300">
+                    <Users size={28} />
+                  </div>
+                  <div>
+                    <p className="text-sm text-stone-500 dark:text-stone-400 font-medium mb-1">{t.totalCandidates}</p>
+                    <p className="text-3xl font-bold text-stone-800 dark:text-white">{totalEval}</p>
+                  </div>
+                </div>
+                <div className="bg-white dark:bg-stone-800 p-6 rounded-3xl border border-stone-200 dark:border-stone-700 shadow-sm flex items-center gap-5">
+                  <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-2xl text-emerald-600 dark:text-emerald-400">
+                    <PieChartIcon size={28} />
+                  </div>
+                  <div>
+                    <p className="text-sm text-stone-500 dark:text-stone-400 font-medium mb-1">{t.acceptanceRate}</p>
+                    <p className="text-3xl font-bold text-stone-800 dark:text-white">{acceptanceRate}%</p>
+                  </div>
+                </div>
+                <div className="bg-white dark:bg-stone-800 p-6 rounded-3xl border border-stone-200 dark:border-stone-700 shadow-sm flex items-center gap-5">
+                  <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl text-amber-600 dark:text-amber-400">
+                    <TrendingUp size={28} />
+                  </div>
+                  <div>
+                    <p className="text-sm text-stone-500 dark:text-stone-400 font-medium mb-1">{t.avgScore}</p>
+                    <p className="text-3xl font-bold text-stone-800 dark:text-white">{avgScore}%</p>
+                  </div>
+                </div>
+              </div>
 
-      <footer className="max-w-7xl mx-auto mt-12 py-6 border-t border-slate-200 dark:border-slate-800 flex items-center justify-center gap-2 text-slate-500 dark:text-slate-400">
+              {/* Charts Section */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-white dark:bg-stone-800 p-8 rounded-3xl border border-stone-200 dark:border-stone-700 shadow-sm">
+                  <h3 className="text-xl font-bold text-stone-800 dark:text-white mb-6 flex items-center gap-2">
+                    <PieChartIcon className="text-amber-500" size={24} />
+                    {t.statusDistribution}
+                  </h3>
+                  <div className="h-72" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={statusData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                        <XAxis type="number" hide />
+                        <YAxis dataKey="name" type="category" width={100} tick={{ fill: isDarkMode ? '#a8a29e' : '#78716c' }} axisLine={false} tickLine={false} />
+                        <Tooltip 
+                          cursor={{ fill: isDarkMode ? '#292524' : '#f5f5f4' }}
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', backgroundColor: isDarkMode ? '#1c1917' : '#ffffff', color: isDarkMode ? '#ffffff' : '#1c1917' }}
+                        />
+                        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                          {statusData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                <div className="bg-white dark:bg-stone-800 p-8 rounded-3xl border border-stone-200 dark:border-stone-700 shadow-sm">
+                  <h3 className="text-xl font-bold text-stone-800 dark:text-white mb-6 flex items-center gap-2">
+                    <AreaChartIcon className="text-amber-500" size={24} />
+                    {t.scoreDistribution}
+                  </h3>
+                  <div className="h-72" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={scoreRanges}>
+                        <defs>
+                          <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#d97706" stopOpacity={0.8}/>
+                            <stop offset="95%" stopColor="#d97706" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <XAxis dataKey="name" stroke={isDarkMode ? '#a8a29e' : '#78716c'} fontSize={12} tickLine={false} axisLine={false} />
+                        <YAxis stroke={isDarkMode ? '#a8a29e' : '#78716c'} fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', backgroundColor: isDarkMode ? '#1c1917' : '#ffffff', color: isDarkMode ? '#ffffff' : '#1c1917' }}
+                        />
+                        <Area type="monotone" dataKey="count" stroke="#d97706" fillOpacity={1} fill="url(#colorCount)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              {/* AI Assistant Chat */}
+              <div className="bg-white dark:bg-stone-800 rounded-3xl shadow-sm border border-stone-200 dark:border-stone-700 overflow-hidden flex flex-col h-[500px]">
+                <div className="p-6 border-b border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800/50 flex items-center gap-3">
+                  <div className="bg-amber-100 dark:bg-amber-900/30 p-2.5 rounded-xl text-amber-600 dark:text-amber-400">
+                    <MessageSquare size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-stone-800 dark:text-white">{t.aiAssistant}</h3>
+                    <p className="text-sm text-stone-500 dark:text-stone-400">
+                      {lang === 'ar' ? 'اسأل المساعد الذكي عن إحصائيات المرشحين وتفاصيلهم' : 'Ask the AI assistant about candidate statistics and details'}
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {chatHistory.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-stone-400 dark:text-stone-500">
+                      <Sparkles size={48} className="mb-4 opacity-20" />
+                      <p>{lang === 'ar' ? 'ابدأ المحادثة مع المساعد الذكي...' : 'Start a conversation with the AI assistant...'}</p>
+                    </div>
+                  ) : (
+                    chatHistory.map((msg, idx) => (
+                      <div key={idx} className={`flex ${msg.role === 'user' ? (lang === 'ar' ? 'justify-end' : 'justify-end') : 'justify-start'}`}>
+                        <div className={`max-w-[80%] rounded-2xl p-4 ${msg.role === 'user' ? 'bg-amber-600 text-white rounded-tl-none' : 'bg-stone-100 dark:bg-stone-700 text-stone-800 dark:text-stone-200 rounded-tr-none'}`}>
+                          <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  {isChatLoading && (
+                    <div className="flex justify-start">
+                      <div className="bg-stone-100 dark:bg-stone-700 text-stone-800 dark:text-stone-200 rounded-2xl rounded-tr-none p-4 flex items-center gap-2">
+                        <Loader2 size={18} className="animate-spin text-amber-500" />
+                        <span className="text-sm">{lang === 'ar' ? 'يفكر...' : 'Thinking...'}</span>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+
+                <div className="p-4 border-t border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <form onSubmit={handleChatSubmit} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder={t.askAssistantPlaceholder}
+                      className="flex-1 bg-stone-50 dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-xl px-4 py-3 text-stone-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                      disabled={isChatLoading}
+                    />
+                    <button
+                      type="submit"
+                      disabled={!chatInput.trim() || isChatLoading}
+                      className="bg-amber-600 hover:bg-amber-700 disabled:bg-stone-300 dark:disabled:bg-stone-700 text-white p-3 rounded-xl transition-colors flex items-center justify-center"
+                    >
+                      <Send size={20} className={lang === 'ar' ? 'rotate-180' : ''} />
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </>
+          )}
+        </main>
+      )}
+
+      <footer className="max-w-7xl mx-auto mt-12 py-6 border-t border-stone-200 dark:border-stone-800 flex items-center justify-center gap-2 text-stone-500 dark:text-stone-400">
         <span className="font-medium">{t.madeBy}</span>
         <Heart size={16} className="text-red-500 fill-red-500" />
       </footer>
