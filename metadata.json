@@ -1,0 +1,5 @@
+{
+  "name": "Smart HR CV Screener",
+  "description": "An AI-powered HR tool to evaluate multiple CVs against saved job profiles, extracting candidate names, match scores, strengths, and summaries.",
+  "requestFramePermissions": []
+}
